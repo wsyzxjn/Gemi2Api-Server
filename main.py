@@ -227,65 +227,28 @@ async def proxy_image(url: str, sig: str):
 		logger.warning(f"Blocked proxy request for domain: {domain}")
 		raise HTTPException(status_code=403, detail="Domain not allowed")
 
+	# Standard browser-like headers, but minimal
 	headers = {
 		"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0",
 		"Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
 		"Accept-Language": "en-US,en;q=0.9",
 		"Referer": "https://gemini.google.com/",
-		"preferanonymous": "1",
-		"cache-control": "no-cache",
-		"pragma": "no-cache",
-		"priority": "u=1, i",
-		"sec-ch-ua": '"Not(A:Brand";v="8", "Chromium";v="144", "Microsoft Edge";v="144"',
-		"sec-ch-ua-arch": '"x86"',
-		"sec-ch-ua-bitness": '"64"',
-		"sec-ch-ua-form-factors": '"Desktop"',
-		"sec-ch-ua-full-version": '"144.0.3719.104"',
-		"sec-ch-ua-full-version-list": '"Not(A:Brand";v="8.0.0.0", "Chromium";v="144.0.7559.110", "Microsoft Edge";v="144.0.3719.104"',
-		"sec-ch-ua-mobile": "?0",
-		"sec-ch-ua-model": '""',
-		"sec-ch-ua-platform": '"Windows"',
-		"sec-ch-ua-platform-version": '"19.0.0"',
-		"sec-ch-ua-wow64": "?0",
-		"sec-fetch-dest": "image",
-		"sec-fetch-mode": "no-cors",
-		"sec-fetch-site": "cross-site",
-		"sec-fetch-storage-access": "none",
 	}
 
+	# Cookies required by Google for authenticated image resources
+	cookies = {
+		"__Secure-1PSID": SECURE_1PSID,
+		"__Secure-1PSIDTS": SECURE_1PSIDTS,
+	}
 
-
-	# IMPORTANT: Use a clean AsyncClient WITHOUT the Gemini session cookies.
-	# We handle redirects manually to ensure ALL custom headers are preserved across domain hops.
-	async with httpx.AsyncClient(http2=True) as client:
+	# IMPORTANT: Use a clean AsyncClient with ONLY the session cookies.
+	# We use HTTP/2 and follow_redirects=True to mimic the native gemini-webapi Image.save logic.
+	async with httpx.AsyncClient(http2=True, cookies=cookies, follow_redirects=True) as client:
 		try:
-			current_url = url
-			max_redirects = 10
-			redirect_count = 0
+			resp = await client.get(url, timeout=15.0, headers=headers)
 			
-			while redirect_count < max_redirects:
-				resp = await client.get(current_url, follow_redirects=False, timeout=15.0, headers=headers)
-				
-				if resp.status_code in (301, 302, 303, 307, 308):
-					location = resp.headers.get("location")
-					if not location:
-						break
-					
-					# Handle relative redirects
-					if not location.startswith("http"):
-						from urllib.parse import urljoin
-						location = urljoin(current_url, location)
-					
-					logger.info(f"Redirecting to: {location} (Hops: {redirect_count + 1})")
-					current_url = location
-					redirect_count += 1
-					continue
-				
-				# Not a redirect, break the loop
-				break
-				
 			if resp.status_code != 200:
-				logger.error(f"Google returned {resp.status_code} for image at {current_url} (Initial: {url})")
+				logger.error(f"Google returned {resp.status_code} for image: {url}")
 				logger.debug(f"Response headers: {resp.headers}")
 			
 			resp.raise_for_status()
@@ -299,6 +262,7 @@ async def proxy_image(url: str, sig: str):
 					"Cache-Control": "public, max-age=86400",  # Cache for 24 hours
 				},
 			)
+
 		except httpx.HTTPStatusError as e:
 			logger.error(f"Failed to fetch image: {e.response.status_code} for {url}")
 			raise HTTPException(status_code=e.response.status_code, detail=f"Failed to fetch image: Google returned {e.response.status_code}")
