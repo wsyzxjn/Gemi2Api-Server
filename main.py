@@ -9,8 +9,10 @@ import time
 import uuid
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Union
+from urllib.parse import quote
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+import httpx
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from gemini_webapi import GeminiClient, set_log_level
@@ -175,6 +177,48 @@ async def verify_api_key(authorization: str = Header(None)):
 	return token
 
 
+@app.get("/v1/proxy/image")
+async def proxy_image(url: str):
+	"""
+	Proxy images from Google domains to bypass browser security policies.
+	"""
+	# Basic validation to prevent open proxying
+	allowed_domains = ["google.com", "googleusercontent.com", "gstatic.com"]
+	# Extract domain from URL
+	match = re.search(r"https?://([^/]+)", url)
+	if not match:
+		raise HTTPException(status_code=400, detail="Invalid URL")
+
+	domain = match.group(1).lower()
+	is_allowed = any(domain == d or domain.endswith("." + d) for d in allowed_domains)
+
+	if not is_allowed:
+		logger.warning(f"Blocked proxy request for domain: {domain}")
+		raise HTTPException(status_code=403, detail="Domain not allowed")
+
+	async with httpx.AsyncClient() as client:
+		try:
+			# Gemini image URLs often redirect
+			resp = await client.get(url, follow_redirects=True, timeout=10.0)
+			resp.raise_for_status()
+
+			return Response(
+				content=resp.content,
+				media_type=resp.headers.get("content-type", "image/png"),
+				headers={
+					"Cross-Origin-Resource-Policy": "cross-origin",
+					"Access-Control-Allow-Origin": "*",
+					"Cache-Control": "public, max-age=86400",  # Cache for 24 hours
+				},
+			)
+		except httpx.HTTPStatusError as e:
+			logger.error(f"Failed to fetch image: {e.response.status_code} for {url}")
+			raise HTTPException(status_code=e.response.status_code, detail="Failed to fetch image")
+		except Exception as e:
+			logger.error(f"Proxy error: {str(e)}")
+			raise HTTPException(status_code=500, detail="Internal proxy error")
+
+
 # Simple error handler middleware
 @app.middleware("http")
 async def error_handling(request: Request, call_next):
@@ -302,7 +346,7 @@ async def get_gemini_client():
 
 
 @app.post("/v1/chat/completions")
-async def create_chat_completion(request: ChatCompletionRequest, api_key: str = Depends(verify_api_key)):
+async def create_chat_completion(request: ChatCompletionRequest, raw_request: Request, api_key: str = Depends(verify_api_key)):
 	try:
 		# 确保客户端已初始化
 		global gemini_client
@@ -345,11 +389,13 @@ async def create_chat_completion(request: ChatCompletionRequest, api_key: str = 
 			reply_text += response.text
 		# 提取并追加图片响应
 		if hasattr(response, "images") and response.images:
+			base_url = str(raw_request.base_url).rstrip("/")
 			for img in response.images:
 				# 检查对象是否有 url 属性 (GeneratedImage 或 WebImage)
 				img_url = getattr(img, "url", None)
 				if img_url:
-					reply_text += f"\n\n![image]({img_url})"
+					proxy_url = f"{base_url}/v1/proxy/image?url={quote(img_url)}"
+					reply_text += f"\n\n![image]({proxy_url})"
 		else:
 			reply_text += str(response)
 		reply_text = reply_text.replace("&lt;", "<").replace("\\<", "<").replace("\\_", "_").replace("\\>", ">")
