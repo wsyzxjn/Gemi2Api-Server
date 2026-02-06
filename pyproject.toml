@@ -13,8 +13,6 @@ dependencies = [
     "httpx>=0.27.0",
     "h2>=4.1.0",
 ]
-
-
 [[tool.uv.index]]
 url = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple"
 default = true
