@@ -315,8 +315,15 @@ def get_image_signature(url: str) -> str:
 
 
 @app.post("/v1/chat/completions")
-async def create_chat_completion(request: ChatCompletionRequest, raw_request: Request, gemini_client: GeminiClient = Depends(get_gemini_client), api_key: str = Depends(verify_api_key)):
+async def create_chat_completion(request: ChatCompletionRequest, raw_request: Request, api_key: str = Depends(verify_api_key)):
 	try:
+		# 确保客户端已初始化
+		global gemini_client
+		if gemini_client is None:
+			gemini_client = GeminiClient(SECURE_1PSID, SECURE_1PSIDTS)
+			await gemini_client.init(timeout=300)
+			logger.info("Gemini client initialized successfully")
+
 		# 转换消息为对话格式
 		conversation, temp_files = prepare_conversation(request.messages)
 		logger.info(f"Prepared conversation: {conversation}")
@@ -471,13 +478,12 @@ async def proxy_image(url: str, sig: str):
 		"Referer": "https://gemini.google.com/",
 	}
 
-	# Cookies required by Google for authenticated image resources
 	cookies = {
 		"__Secure-1PSID": SECURE_1PSID,
 		"__Secure-1PSIDTS": SECURE_1PSIDTS,
 	}
 
-	# Use HTTP/2 and follow_redirects=True to mimic the gemini-webapi Image.save logic.
+	# Use HTTP/2 and follow_redirects=True to follow the gemini-webapi Image.save logic.
 	async with httpx.AsyncClient(http2=True, cookies=cookies, follow_redirects=True) as client:
 		try:
 			resp = await client.get(url, timeout=15.0, headers=headers)
