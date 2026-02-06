@@ -390,6 +390,9 @@ async def create_chat_completion(request: ChatCompletionRequest, raw_request: Re
 			reply_text += f"<think>{response.thoughts}</think>"
 		if hasattr(response, "text"):
 			reply_text += response.text
+		else:
+			reply_text += str(response)
+
 		# 提取并追加图片响应
 		if hasattr(response, "images") and response.images:
 			base_url = PUBLIC_BASE_URL or str(raw_request.base_url).rstrip("/")
@@ -400,8 +403,6 @@ async def create_chat_completion(request: ChatCompletionRequest, raw_request: Re
 					sig = get_image_signature(img_url)
 					proxy_url = f"{base_url}/gemini-proxy/image?url={quote(img_url)}&sig={sig}"
 					reply_text += f"\n\n![image]({proxy_url})"
-		else:
-			reply_text += str(response)
 		reply_text = reply_text.replace("&lt;", "<").replace("\\<", "<").replace("\\_", "_").replace("\\>", ">")
 		reply_text = correct_markdown(reply_text)
 
