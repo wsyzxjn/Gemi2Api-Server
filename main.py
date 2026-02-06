@@ -531,15 +531,17 @@ async def proxy_image(url: str, sig: str):
 		"Referer": "https://gemini.google.com/",
 	}
 
-	cookies = {
-		"__Secure-1PSID": SECURE_1PSID,
-		"__Secure-1PSIDTS": SECURE_1PSIDTS,
-	}
-
 	# 10MB limit
 	MAX_BYTES = 10 * 1024 * 1024
 
-	async with httpx.AsyncClient(http2=True, cookies=cookies, follow_redirects=True) as client:
+	# Use scoped cookies to prevent leakage during redirects
+	jar = httpx.Cookies()
+	jar.set("__Secure-1PSID", SECURE_1PSID, domain=".google.com")
+	jar.set("__Secure-1PSIDTS", SECURE_1PSIDTS, domain=".google.com")
+	jar.set("__Secure-1PSID", SECURE_1PSID, domain=".googleusercontent.com")
+	jar.set("__Secure-1PSIDTS", SECURE_1PSIDTS, domain=".googleusercontent.com")
+
+	async with httpx.AsyncClient(http2=True, cookies=jar, follow_redirects=True) as client:
 		try:
 			async with client.stream("GET", url, timeout=15.0, headers=headers) as resp:
 				if resp.status_code != 200:
@@ -553,14 +555,22 @@ async def proxy_image(url: str, sig: str):
 					if len(content) > MAX_BYTES:
 						logger.warning(f"Image too large: {url} (exceeded {MAX_BYTES} bytes)")
 						raise HTTPException(status_code=413, detail="Image too large")
+				# Validate Content-Type to prevent XSS/MIME sniffing
+				upstream_content_type = resp.headers.get("content-type", "image/png").lower()
+				if not upstream_content_type.startswith("image/"):
+					logger.warning(f"Rejected non-image Content-Type: {upstream_content_type} for {url}")
+					media_type = "image/png"
+				else:
+					media_type = upstream_content_type
 
 				return Response(
 					content=bytes(content),
-					media_type=resp.headers.get("content-type", "image/png"),
+					media_type=media_type,
 					headers={
 						"Cross-Origin-Resource-Policy": "cross-origin",
 						"Access-Control-Allow-Origin": "*",
 						"Cache-Control": "public, max-age=86400",  # Cache for 24 hours
+						"X-Content-Type-Options": "nosniff",
 					},
 				)
 		except httpx.HTTPStatusError as e:
@@ -570,7 +580,7 @@ async def proxy_image(url: str, sig: str):
 			raise
 		except Exception as e:
 			logger.error(f"Proxy error: {str(e)}")
-			raise HTTPException(status_code=500, detail=f"Internal proxy error: {str(e)}")
+			raise HTTPException(status_code=500, detail="Internal proxy error")
 
 
 @app.get("/")
