@@ -537,28 +537,38 @@ async def proxy_image(url: str, sig: str):
 		"__Secure-1PSIDTS": SECURE_1PSIDTS,
 	}
 
-	# Use HTTP/2 and follow_redirects=True to follow the gemini-webapi Image.save logic.
+	# 10MB limit
+	MAX_BYTES = 10 * 1024 * 1024
+
 	async with httpx.AsyncClient(http2=True, cookies=cookies, follow_redirects=True) as client:
 		try:
-			resp = await client.get(url, timeout=15.0, headers=headers)
-			
-			if resp.status_code != 200:
-				logger.error(f"Google returned {resp.status_code} for image: {url}")
-			
-			resp.raise_for_status()
+			async with client.stream("GET", url, timeout=15.0, headers=headers) as resp:
+				if resp.status_code != 200:
+					logger.error(f"Google returned {resp.status_code} for image: {url}")
+				
+				resp.raise_for_status()
 
-			return Response(
-				content=resp.content,
-				media_type=resp.headers.get("content-type", "image/png"),
-				headers={
-					"Cross-Origin-Resource-Policy": "cross-origin",
-					"Access-Control-Allow-Origin": "*",
-					"Cache-Control": "public, max-age=86400",  # Cache for 24 hours
-				},
-			)
+				content = bytearray()
+				async for chunk in resp.aiter_bytes():
+					content.extend(chunk)
+					if len(content) > MAX_BYTES:
+						logger.warning(f"Image too large: {url} (exceeded {MAX_BYTES} bytes)")
+						raise HTTPException(status_code=413, detail="Image too large")
+
+				return Response(
+					content=bytes(content),
+					media_type=resp.headers.get("content-type", "image/png"),
+					headers={
+						"Cross-Origin-Resource-Policy": "cross-origin",
+						"Access-Control-Allow-Origin": "*",
+						"Cache-Control": "public, max-age=86400",  # Cache for 24 hours
+					},
+				)
 		except httpx.HTTPStatusError as e:
 			logger.error(f"Failed to fetch image: {e.response.status_code} for {url}")
 			raise HTTPException(status_code=e.response.status_code, detail=f"Failed to fetch image: Google returned {e.response.status_code}")
+		except HTTPException:
+			raise
 		except Exception as e:
 			logger.error(f"Proxy error: {str(e)}")
 			raise HTTPException(status_code=500, detail=f"Internal proxy error: {str(e)}")
