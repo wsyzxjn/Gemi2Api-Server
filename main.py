@@ -157,6 +157,7 @@ SECURE_1PSIDTS = os.environ.get("SECURE_1PSIDTS", "")
 API_KEY = os.environ.get("API_KEY", "")
 ENABLE_THINKING = os.environ.get("ENABLE_THINKING", "false").lower() == "true"
 TEMPORARY_CHAT = os.environ.get("TEMPORARY_CHAT", "false").lower() == "true"
+DISABLE_BUILTIN_MODELS = os.environ.get("DISABLE_BUILTIN_MODELS", "false").lower() == "true"
 AUTO_DELETE_CHAT = os.environ.get("AUTO_DELETE_CHAT", "true").lower() == "true" and not TEMPORARY_CHAT
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
 SECRET_FILE_PATH = os.path.join(os.path.dirname(__file__), "secrets", "proxy_secret")
@@ -638,6 +639,10 @@ async def list_models():
 				"owned_by": "google-gemini-web",
 			}
 		)
+
+	# 禁用内置模型时，仅返回自定义模型
+	if DISABLE_BUILTIN_MODELS:
+		return {"object": "list", "data": data}
 
 	for m in Model:
 		if m is Model.UNSPECIFIED:

@@ -37,6 +37,7 @@ TEMPORARY_CHAT = "false" # 使用临时对话模式，此模式会禁用部分�
 AUTO_DELETE_CHAT = "true" # 生成结束后自动从web端删除对话记录，默认开启。TEMPORARY_CHAT为true时，此项无效。
 PUBLIC_BASE_URL = "https://your-domain.com" # 外部URL，用于生成图片代理链接，不填则会使用内部地址。使用反向代理时必填，否则可能导致图片无法访问。
 CUSTOM_MODELS_FILE = "custom_models.yaml" # 可选。用于覆写/新增 Gemini 模型定义，支持 YAML/JSON。
+DISABLE_BUILTIN_MODELS = "false" # 可选。设为 true 时，/v1/models 仅返回 CUSTOM_MODELS(_FILE) 中定义的模型，不再追加 gemini_webapi 内置模型。此开关在服务启动时读取，修改 .env 后需重启生效（区别于 CUSTOM_MODELS_FILE 的免重启热加载）。
 ```
 
 `custom_models.yaml` 示例：
